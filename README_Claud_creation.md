@@ -2,7 +2,7 @@
 
 A console version of Wordle in Java, where the secret word is one of the 107 legal two-letter Scrabble words from the NASPA Word List (NWL). The player gets 6 guesses. After each guess the program shows which letters are in the right spot, which are in the word but in the wrong spot, and which are not in the word.
 
-Iteration 2 adds a Battleship-style hint: the guessed letter that is closest in the alphabet to a letter still to be found is marked, and a message appears when it is within 1 or 3 letters.
+Iterations 2 and 3 add a Battleship-style hint. When neither guessed letter is in the word, the one closest in the alphabet to a letter of the secret word is marked, and a message appears when it is within 1 or 3 letters.
 
 This project was built with generative AI (Claude) as a coding collaborator, as part of a design → build → test → learn assignment.
 
@@ -15,9 +15,10 @@ This project was built with generative AI (Claude) as a coding collaborator, as 
   |---|---|
   | `[Q]` | right letter, right spot |
   | `(Q)` | letter is in the word, wrong spot |
-  | `<Q>` | not in the word, but the closest of your letters (in A–Z order) to a letter you haven't found yet |
+  | `<Q>` | not in the word, but the closest of your letters (in A–Z order) to a letter of the secret word |
   | `-Q-` | letter is not in the word |
 
+- `<Q>` appears **only when neither letter of the guess is in the word**. If either letter is `[Q]` or `(Q)`, the other letter is just `-Q-`.
 - A `<Q>` letter also gets a message when it is near:
 
   | Alphabet distance | Message |
@@ -26,7 +27,14 @@ This project was built with generative AI (Claude) as a coding collaborator, as 
   | 2–3 | `letter Q is almost there` |
   | 4 or more | no message |
 
-  Example: the secret word is `BG` and you guess `AZ`. The board shows `<A> -Z-`, followed by `letter A is so close!`, because A is next to B.
+  Example with secret word `NO`:
+
+  | Guess | Board | Message | Why |
+  |---|---|---|---|
+  | `MZ` | `<M> -Z-` | `letter M is so close!` | neither letter is in the word; M is 1 from N |
+  | `AO` | `-A- [O]` | none | O is in the word, so closeness is off |
+  | `LR` | `<L> -R-` | `letter L is almost there` | neither letter is in the word; L is 2 from N, R is 3 from O |
+  | `NO` | `[N] [O]` | none | solved |
 - Type `STOP` (any case) at a guess prompt to quit. The secret word is revealed.
 - Invalid input (wrong length, an empty line, spaces, or anything other than A–Z) prints `Improper input. Please enter a two letter guess` and does **not** use up a guess.
 - When a game ends with a win or a loss, the secret word is shown and you are asked whether to play again.
@@ -70,13 +78,13 @@ The code uses only Java 8 features, so it compiles on any JDK from 8 onward.
 
 1. **CORRECT:** right letter in the right position. That secret position is used up.
 2. **PRESENT:** for each remaining guess letter, look for an unused secret position with the same letter. If one is found, the guess letter is PRESENT and that position is used up.
-3. **ABSENT:** every other guess letter is ABSENT. Record its alphabet distance to the nearest **unused** secret letter.
-4. **CLOSEST:** the ABSENT letter(s) with the smallest distance become CLOSEST.
+3. **ABSENT:** every other guess letter is ABSENT. Record its alphabet distance to the nearest secret letter.
+4. **CLOSEST:** only if no guess letter was CORRECT or PRESENT, the letter(s) with the smallest distance become CLOSEST.
 
 Two rules follow from this:
 
-- **Repeated letters are scored correctly.** With secret `BA` and guess `AA`, the second `A` is CORRECT and uses up the secret's only `A`. The first `A` is therefore not PRESENT. Instead it is CLOSEST, because it is 1 away from the unfound `B`.
-- **Closeness ignores letters already found.** With secret `BG` and guess `HG`, `G` is already found, so `H` is measured against `B` (6 away), not `G` (1 away). Otherwise "so close!" would point at a letter the player already has.
+- **Repeated letters are scored correctly.** With secret `BA` and guess `AA`, the second `A` is CORRECT and uses up the secret's only `A`. The first `A` is therefore not PRESENT; it is ABSENT.
+- **A hit switches closeness off.** With secret `BG` and guess `BH`, `B` is CORRECT, so `H` is shown as `-H-` even though it is 1 from `G`. Closeness is a tool for the "searching for a hit" stage. Once a letter is found, the player switches to Wordle-style guessing.
 
 ### Data structures used
 
@@ -89,7 +97,7 @@ Two rules follow from this:
 | `HashSet<Character>` | `getHints` | gives one message per letter when a guess repeats a letter |
 | `enum LetterResult` | feedback | four named results instead of magic strings or numbers |
 
-Iteration 1 counted unmatched letters with a `HashMap<Character, Integer>`. A count says how many copies of a letter remain, but not *which positions* are still unfound. Closeness needs the positions, so iteration 2 replaced the map with the `boolean[]`. The repeated-letter tests from iteration 1 still pass with their updated expected output.
+Iteration 1 counted unmatched letters with a `HashMap<Character, Integer>`. A count says how many copies of a letter remain, but not *which positions* are still unfound. Iteration 2's closeness rule needed the positions, so the map was replaced with the `boolean[]`. Iteration 3's rule no longer needs the positions, because closeness now only runs when nothing was matched. The `boolean[]` was kept because it is still the simplest way to score repeated letters.
 
 ## Design decisions
 
@@ -121,6 +129,19 @@ The trigger for this iteration came from play-testing. Players often guess two r
 | Ties | All tied letters are marked, since choosing one would be arbitrary. Each distinct letter gets one message. |
 | Message wording | `letter Q is so close!` (distance 1), `letter Q is almost there` (2–3). |
 
+### Iteration 3: closeness only on a full miss
+
+Play-testing iteration 2 showed two problems:
+
+- When one letter was a hit and the other a miss, the miss was always marked `<Q>`, even when it was far away. The mark carried no information.
+- The hint mixed two stages of play: searching for a first hit, and narrowing down once a hit is found.
+
+| Question | Decision |
+|---|---|
+| When does closeness apply? | Only when neither guessed letter is in the word. |
+| Measured against which secret letters? | All of them. Since nothing in the guess was found, no secret letter is excluded. |
+| Memory across guesses? | None. Each guess is judged on its own (see limitations). |
+
 ### Edge cases found while building
 
 - **Upper-casing can change a string's length.** The German letter `ß` becomes `SS` when upper-cased. Checking the length *after* upper-casing would let a one-character input through as the guess `SS`. The validator therefore checks the original characters before converting.
@@ -128,7 +149,8 @@ The trigger for this iteration came from play-testing. Players often guess two r
 
 ## Known limitations / ideas for the next iteration
 
-- Because the closest miss is always marked, a guess with only one miss always shows `<Q>`, even when that letter is far away. In that case the mark adds no information. One option is to show `<Q>` only within distance 3.
+- Closeness doesn't remember earlier guesses. If the secret is `NO` and the player already found `O`, a full-miss guess like `PZ` still says `letter P is so close!`, because P is 1 from O. The hint is accurate, but it points at a letter the player already has. One fix is to measure only against secret letters not found on any earlier guess.
+- When both letters miss and both are far away, the closer one is still marked `<Q>` with no message. This tells the player which of the two letters is nearer, but not by how much.
 - The hint doesn't say whether the secret letter is earlier or later in the alphabet. Adding a direction (e.g. "letter A is so close! (go later)") would make the game more like a guided search.
 - The word length is a constant (`Word.WORD_LENGTH = 2`). A different word length would also need a new error message and a new word file.
 - Possible additions:
