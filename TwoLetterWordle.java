@@ -8,7 +8,8 @@ import java.util.Scanner;
  *
  * The player has 6 guesses to find a secret two-letter word chosen at
  * random from words.txt (the NWL Scrabble two-letter words). Typing STOP
- * (any case) at a guess prompt ends the program.
+ * (any case) at a guess prompt ends the program. After each guess the
+ * board is printed, followed by any closeness hints for that guess.
  *
  * words.txt must be in the program's working folder. In jGRASP, that is
  * the same folder as this .java file.
@@ -57,7 +58,11 @@ public class TwoLetterWordle {
         System.out.println("How to read the feedback:");
         System.out.println("  [Q]  right letter, right spot");
         System.out.println("  (Q)  letter is in the word, wrong spot");
+        System.out.println("  <Q>  not in the word, but the closest of your");
+        System.out.println("       letters to a letter in the word (A-Z order)");
         System.out.println("  -Q-  letter is not in the word");
+        System.out.println("A message tells you when a <Q> letter is within");
+        System.out.println("1 letter (so close!) or 3 letters (almost there).");
         System.out.println();
     }
 
@@ -99,6 +104,9 @@ public class TwoLetterWordle {
 
             System.out.println();
             System.out.println(word);
+            for (String hint : word.getHints(input)) {
+                System.out.println(hint);
+            }
             System.out.println("Guesses remaining: " + word.getGuessesRemaining());
             System.out.println();
         }
