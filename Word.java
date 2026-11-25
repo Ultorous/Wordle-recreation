@@ -19,12 +19,13 @@ import java.util.TreeSet;
  *   PRESENT - letter is in the word, wrong spot   shown as (Q)
  *   CLOSEST - not in the word, but the guessed
  *             letter nearest (in the alphabet) to
- *             a letter still to be found           shown as <Q>
+ *             a letter of the secret word          shown as <Q>
  *   ABSENT  - letter is not in the word           shown as -Q-
  *
  * "Battleship" closeness: the alphabet is indexed A=0, B=1, ..., Z=25.
- * For each guessed letter that is not in the word, the program finds its
- * distance to the nearest secret letter the guess has not already found.
+ * Closeness applies ONLY when no letter of the guess is in the secret word
+ * (no CORRECT or PRESENT letters). Then, for each guessed letter, the
+ * program finds its distance to the nearest letter of the secret word.
  * The guessed letter(s) with the smallest distance are marked CLOSEST.
  * A CLOSEST letter also gets a message when it is near:
  *   distance 1     -> "letter Q is so close!"
@@ -242,7 +243,7 @@ public class Word {
     /**
      * Scores an upper-case guess. Fills in marks (the result for each guess
      * letter) and distances (each guess letter's alphabet distance to the
-     * nearest secret letter not yet found; 0 for CORRECT and PRESENT).
+     * nearest letter of the secret word; 0 for CORRECT and PRESENT).
      *
      * Works in four passes so repeated letters are handled correctly:
      *   1. Exact matches are CORRECT. Their secret positions are used up.
@@ -252,9 +253,12 @@ public class Word {
      *      Example: secret BA, guess AA. The second A is CORRECT and uses
      *      up the secret's only A, so the first A is NOT present.
      *   3. Every remaining guess letter is ABSENT. Record its distance to
-     *      the nearest unused secret letter, by comparing alphabet indexes.
-     *   4. The ABSENT letter(s) with the smallest distance become CLOSEST.
-     *      Ties are all marked, since they are equally close.
+     *      the nearest secret letter, by comparing alphabet indexes.
+     *   4. Only if NO guess letter was CORRECT or PRESENT: the letter(s)
+     *      with the smallest distance become CLOSEST. Ties are all marked,
+     *      since they are equally close.
+     *      Example: secret NO. Guess MZ gives <M> -Z- (M is next to N).
+     *      Guess AO gives -A- [O], with no closeness, because O was found.
      */
     private void score(String g, LetterResult[] marks, int[] distances) {
         int[] guessIndexes = new int[WORD_LENGTH];
@@ -285,30 +289,35 @@ public class Word {
             }
         }
 
-        // Pass 3: letters not in the word. Measure distance to the nearest
-        // secret letter not already found. (There is always at least one:
-        // every used-up secret position matches a different guess letter,
-        // so if a guess letter is left over, a secret position is too.)
-        int smallestDistance = Integer.MAX_VALUE;
+        // Pass 3: every letter not yet marked is not in the word.
+        // Record its distance to the nearest letter of the secret word.
+        boolean anyLetterFound = false;
         for (int i = 0; i < WORD_LENGTH; i++) {
             if (marks[i] == null) {
                 marks[i] = LetterResult.ABSENT;
                 int nearest = Integer.MAX_VALUE;
                 for (int j = 0; j < WORD_LENGTH; j++) {
-                    if (!secretUsed[j]) {
-                        int distance = Math.abs(guessIndexes[i] - secretIndexes[j]);
-                        nearest = Math.min(nearest, distance);
-                    }
+                    int distance = Math.abs(guessIndexes[i] - secretIndexes[j]);
+                    nearest = Math.min(nearest, distance);
                 }
                 distances[i] = nearest;
-                smallestDistance = Math.min(smallestDistance, nearest);
+            } else {
+                anyLetterFound = true;   // CORRECT or PRESENT
             }
         }
 
-        // Pass 4: the closest ABSENT letter(s) become CLOSEST.
-        for (int i = 0; i < WORD_LENGTH; i++) {
-            if (marks[i] == LetterResult.ABSENT && distances[i] == smallestDistance) {
-                marks[i] = LetterResult.CLOSEST;
+        // Pass 4: closeness applies only if NO letter of the guess is in
+        // the word. Then the letter(s) with the smallest distance become
+        // CLOSEST. Ties are all marked, since they are equally close.
+        if (!anyLetterFound) {
+            int smallestDistance = Integer.MAX_VALUE;
+            for (int i = 0; i < WORD_LENGTH; i++) {
+                smallestDistance = Math.min(smallestDistance, distances[i]);
+            }
+            for (int i = 0; i < WORD_LENGTH; i++) {
+                if (distances[i] == smallestDistance) {
+                    marks[i] = LetterResult.CLOSEST;
+                }
             }
         }
     }
