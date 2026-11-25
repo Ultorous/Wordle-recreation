@@ -59,10 +59,11 @@ public class TwoLetterWordle {
         System.out.println("  [Q]  right letter, right spot");
         System.out.println("  (Q)  letter is in the word, wrong spot");
         System.out.println("  <Q>  not in the word, but the closest of your");
-        System.out.println("       letters to a letter in the word (A-Z order)");
+        System.out.println("       letters to a letter in the word (A-Z order).");
+        System.out.println("       Only shown when neither letter is in the word.");
         System.out.println("  -Q-  letter is not in the word");
         System.out.println("A message tells you when a <Q> letter is within");
-        System.out.println("1 letter (so close!) or 3 letters (almost there).");
+        System.out.println("1 letter (so close!) or 3 letters (almost there.).");
         System.out.println();
     }
 
