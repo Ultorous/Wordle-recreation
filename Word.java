@@ -1,10 +1,9 @@
 import java.io.File;
 import java.io.FileNotFoundException;
 import java.util.ArrayList;
-import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
-import java.util.Map;
 import java.util.Random;
 import java.util.Scanner;
 import java.util.Set;
@@ -15,10 +14,22 @@ import java.util.TreeSet;
  * the guesses made so far, and the methods that check a guess against
  * the secret word.
  *
- * Each letter of a guess gets one of three results:
+ * Each letter of a guess gets one of four results:
  *   CORRECT - right letter, right position        shown as [Q]
  *   PRESENT - letter is in the word, wrong spot   shown as (Q)
+ *   CLOSEST - not in the word, but the guessed
+ *             letter nearest (in the alphabet) to
+ *             a letter still to be found           shown as <Q>
  *   ABSENT  - letter is not in the word           shown as -Q-
+ *
+ * "Battleship" closeness: the alphabet is indexed A=0, B=1, ..., Z=25.
+ * For each guessed letter that is not in the word, the program finds its
+ * distance to the nearest secret letter the guess has not already found.
+ * The guessed letter(s) with the smallest distance are marked CLOSEST.
+ * A CLOSEST letter also gets a message when it is near:
+ *   distance 1     -> "letter Q is so close!"
+ *   distance 2-3   -> "letter Q is almost there"
+ * The alphabet does not wrap around: A and Z are 25 apart, not 1.
  *
  * Guesses are case insensitive and do not have to be real words.
  * Any combination of two letters A-Z is accepted.
@@ -26,7 +37,7 @@ import java.util.TreeSet;
 public class Word {
 
     /** The possible results for one letter of a guess. */
-    public enum LetterResult { CORRECT, PRESENT, ABSENT }
+    public enum LetterResult { CORRECT, PRESENT, CLOSEST, ABSENT }
 
     /** Number of letters in the secret word and in every guess. */
     public static final int WORD_LENGTH = 2;
@@ -34,11 +45,18 @@ public class Word {
     /** Number of guesses the player gets per game. */
     public static final int MAX_GUESSES = 6;
 
+    /** Largest alphabet distance that earns the "so close!" message. */
+    public static final int SO_CLOSE_DISTANCE = 1;
+
+    /** Largest alphabet distance that earns the "almost there" message. */
+    public static final int ALMOST_THERE_DISTANCE = 3;
+
     /** Message used when a guess is not exactly two letters A-Z. */
     public static final String IMPROPER_INPUT_MESSAGE =
             "Improper input. Please enter a two letter guess";
 
     private final String secret;                    // always upper case
+    private int[] secretIndexes;                    // alphabet index of each secret letter
     private final List<String> guesses;             // guesses made, in order
     private final List<List<LetterResult>> results; // results for each guess
 
@@ -59,6 +77,7 @@ public class Word {
         this.secret = secret.toUpperCase(Locale.ROOT);
         this.guesses = new ArrayList<String>();
         this.results = new ArrayList<List<LetterResult>>();
+        storeSecretIndexes();
     }
 
     /**
@@ -72,6 +91,27 @@ public class Word {
      */
     public Word(File dictionaryFile) throws FileNotFoundException {
         this(pickRandomWord(loadDictionary(dictionaryFile), new Random()));
+    }
+
+    /**
+     * Stores the alphabet index of each letter of the secret word.
+     * For example, secret "BG" is stored as {1, 6}.
+     */
+    private void storeSecretIndexes() {
+        secretIndexes = new int[secret.length()];
+        for (int i = 0; i < secret.length(); i++) {
+            secretIndexes[i] = alphabetIndex(secret.charAt(i));
+        }
+    }
+
+    /**
+     * Returns the alphabet index of an upper-case letter: A=0, B=1, ..., Z=25.
+     *
+     * @param letter an upper-case letter A-Z
+     * @return the letter's position in the alphabet, starting at 0
+     */
+    public static int alphabetIndex(char letter) {
+        return letter - 'A';
     }
 
     /**
@@ -150,15 +190,6 @@ public class Word {
     /**
      * Compares a guess to the secret word without recording it.
      *
-     * Uses two passes so repeated letters are handled correctly:
-     *   1. Mark every letter in the right position CORRECT, and count
-     *      the secret's letters that were NOT matched.
-     *   2. For each remaining guess letter, mark it PRESENT only if an
-     *      unmatched copy of that letter is still left in the count;
-     *      otherwise mark it ABSENT.
-     * Example: secret BA, guess AA gives ABSENT, CORRECT. The secret has
-     * only one A, and it is already used by the CORRECT match.
-     *
      * @param guess the guess to check (case insensitive)
      * @return one LetterResult per letter of the guess, in order
      * @throws IllegalArgumentException if guess is not valid input
@@ -166,38 +197,120 @@ public class Word {
     public List<LetterResult> evaluate(String guess) {
         String g = normalizeGuess(guess);
         LetterResult[] marks = new LetterResult[WORD_LENGTH];
-        Map<Character, Integer> unmatched = new HashMap<Character, Integer>();
-
-        // Pass 1: exact matches, and count the secret letters left over.
-        for (int i = 0; i < WORD_LENGTH; i++) {
-            char secretLetter = secret.charAt(i);
-            if (g.charAt(i) == secretLetter) {
-                marks[i] = LetterResult.CORRECT;
-            } else {
-                int count = unmatched.getOrDefault(secretLetter, 0);
-                unmatched.put(secretLetter, count + 1);
-            }
-        }
-
-        // Pass 2: letters in the word but in the wrong position.
-        for (int i = 0; i < WORD_LENGTH; i++) {
-            if (marks[i] == null) {
-                char guessLetter = g.charAt(i);
-                int count = unmatched.getOrDefault(guessLetter, 0);
-                if (count > 0) {
-                    marks[i] = LetterResult.PRESENT;
-                    unmatched.put(guessLetter, count - 1);
-                } else {
-                    marks[i] = LetterResult.ABSENT;
-                }
-            }
-        }
+        int[] distances = new int[WORD_LENGTH];
+        score(g, marks, distances);
 
         List<LetterResult> resultList = new ArrayList<LetterResult>();
         for (LetterResult mark : marks) {
             resultList.add(mark);
         }
         return resultList;
+    }
+
+    /**
+     * Returns the closeness messages for a guess, e.g. "letter A is so close!".
+     * Only letters marked CLOSEST get a message, and only when their distance
+     * is ALMOST_THERE_DISTANCE or less. A letter typed twice gets one message.
+     * Does not record the guess.
+     *
+     * @param guess the guess to check (case insensitive)
+     * @return the messages, in guess order (may be empty)
+     * @throws IllegalArgumentException if guess is not valid input
+     */
+    public List<String> getHints(String guess) {
+        String g = normalizeGuess(guess);
+        LetterResult[] marks = new LetterResult[WORD_LENGTH];
+        int[] distances = new int[WORD_LENGTH];
+        score(g, marks, distances);
+
+        List<String> hints = new ArrayList<String>();
+        Set<Character> lettersHinted = new HashSet<Character>();
+        for (int i = 0; i < WORD_LENGTH; i++) {
+            char letter = g.charAt(i);
+            if (marks[i] == LetterResult.CLOSEST && !lettersHinted.contains(letter)) {
+                lettersHinted.add(letter);
+                if (distances[i] <= SO_CLOSE_DISTANCE) {
+                    hints.add("letter " + letter + " is so close!");
+                } else if (distances[i] <= ALMOST_THERE_DISTANCE) {
+                    hints.add("letter " + letter + " is almost there");
+                }
+            }
+        }
+        return hints;
+    }
+
+    /**
+     * Scores an upper-case guess. Fills in marks (the result for each guess
+     * letter) and distances (each guess letter's alphabet distance to the
+     * nearest secret letter not yet found; 0 for CORRECT and PRESENT).
+     *
+     * Works in four passes so repeated letters are handled correctly:
+     *   1. Exact matches are CORRECT. Their secret positions are used up.
+     *   2. For each remaining guess letter, look for an unused secret
+     *      position with the same letter. If found, the guess letter is
+     *      PRESENT and that secret position is used up.
+     *      Example: secret BA, guess AA. The second A is CORRECT and uses
+     *      up the secret's only A, so the first A is NOT present.
+     *   3. Every remaining guess letter is ABSENT. Record its distance to
+     *      the nearest unused secret letter, by comparing alphabet indexes.
+     *   4. The ABSENT letter(s) with the smallest distance become CLOSEST.
+     *      Ties are all marked, since they are equally close.
+     */
+    private void score(String g, LetterResult[] marks, int[] distances) {
+        int[] guessIndexes = new int[WORD_LENGTH];
+        for (int i = 0; i < WORD_LENGTH; i++) {
+            guessIndexes[i] = alphabetIndex(g.charAt(i));
+        }
+        boolean[] secretUsed = new boolean[WORD_LENGTH];
+
+        // Pass 1: right letter, right position.
+        for (int i = 0; i < WORD_LENGTH; i++) {
+            if (guessIndexes[i] == secretIndexes[i]) {
+                marks[i] = LetterResult.CORRECT;
+                distances[i] = 0;
+                secretUsed[i] = true;
+            }
+        }
+
+        // Pass 2: right letter, wrong position.
+        for (int i = 0; i < WORD_LENGTH; i++) {
+            if (marks[i] == null) {
+                for (int j = 0; j < WORD_LENGTH && marks[i] == null; j++) {
+                    if (!secretUsed[j] && secretIndexes[j] == guessIndexes[i]) {
+                        marks[i] = LetterResult.PRESENT;
+                        distances[i] = 0;
+                        secretUsed[j] = true;
+                    }
+                }
+            }
+        }
+
+        // Pass 3: letters not in the word. Measure distance to the nearest
+        // secret letter not already found. (There is always at least one:
+        // every used-up secret position matches a different guess letter,
+        // so if a guess letter is left over, a secret position is too.)
+        int smallestDistance = Integer.MAX_VALUE;
+        for (int i = 0; i < WORD_LENGTH; i++) {
+            if (marks[i] == null) {
+                marks[i] = LetterResult.ABSENT;
+                int nearest = Integer.MAX_VALUE;
+                for (int j = 0; j < WORD_LENGTH; j++) {
+                    if (!secretUsed[j]) {
+                        int distance = Math.abs(guessIndexes[i] - secretIndexes[j]);
+                        nearest = Math.min(nearest, distance);
+                    }
+                }
+                distances[i] = nearest;
+                smallestDistance = Math.min(smallestDistance, nearest);
+            }
+        }
+
+        // Pass 4: the closest ABSENT letter(s) become CLOSEST.
+        for (int i = 0; i < WORD_LENGTH; i++) {
+            if (marks[i] == LetterResult.ABSENT && distances[i] == smallestDistance) {
+                marks[i] = LetterResult.CLOSEST;
+            }
+        }
     }
 
     /**
@@ -246,9 +359,14 @@ public class Word {
         return secret;
     }
 
+    /** @return a copy of the alphabet indexes of the secret word's letters */
+    public int[] getSecretIndexes() {
+        return secretIndexes.clone();
+    }
+
     /**
      * Formats a guess and its results as plain text,
-     * e.g. guess QI with CORRECT, ABSENT becomes "[Q] -I-".
+     * e.g. guess AZ with CLOSEST, ABSENT becomes "<A> -Z-".
      *
      * @param guess the guess (upper or lower case)
      * @param result the results for each letter of the guess
@@ -267,6 +385,8 @@ public class Word {
                 text += "[" + letter + "]";
             } else if (mark == LetterResult.PRESENT) {
                 text += "(" + letter + ")";
+            } else if (mark == LetterResult.CLOSEST) {
+                text += "<" + letter + ">";
             } else {
                 text += "-" + letter + "-";
             }
