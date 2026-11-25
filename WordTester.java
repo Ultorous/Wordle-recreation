@@ -21,6 +21,8 @@ public class WordTester {
 
     public static void main(String[] args) throws IOException {
         testFeedback();
+        testCloseness();
+        testSecretIndexes();
         testGuessValidation();
         testSecretValidation();
         testGameState();
@@ -44,22 +46,110 @@ public class WordTester {
         System.out.println("== Feedback ==");
         checkFeedback("QI", "QI", "[Q] [I]");    // exact match
         checkFeedback("QI", "qi", "[Q] [I]");    // lower case guess
-        checkFeedback("QI", "XU", "-X- -U-");    // nothing in common
+        checkFeedback("QI", "XU", "-X- <U>");    // U is 4 from Q, X is 7 from Q
         checkFeedback("AB", "BA", "(B) (A)");    // both letters swapped
-        checkFeedback("AB", "AX", "[A] -X-");    // one correct
-        checkFeedback("AB", "XA", "-X- (A)");    // one present
+        checkFeedback("AB", "AX", "[A] <X>");    // one correct, other is closest
+        checkFeedback("AB", "XA", "<X> (A)");    // one present, other is closest
         checkFeedback("MA", "AM", "(A) (M)");
         // Repeated letters: these break a naive one-pass algorithm.
-        checkFeedback("BA", "AA", "-A- [A]");    // only one A in secret
-        checkFeedback("AB", "AA", "[A] -A-");
-        checkFeedback("MO", "MM", "[M] -M-");
-        checkFeedback("OM", "MM", "-M- [M]");
-        checkFeedback("HM", "MM", "-M- [M]");
-        checkFeedback("AA", "AB", "[A] -B-");
-        checkFeedback("AA", "BA", "-B- [A]");
+        checkFeedback("BA", "AA", "<A> [A]");    // only one A in secret
+        checkFeedback("AB", "AA", "[A] <A>");
+        checkFeedback("MO", "MM", "[M] <M>");
+        checkFeedback("OM", "MM", "<M> [M]");
+        checkFeedback("HM", "MM", "<M> [M]");
+        checkFeedback("AA", "AB", "[A] <B>");
+        checkFeedback("AA", "BA", "<B> [A]");
         checkFeedback("MM", "MM", "[M] [M]");
-        checkFeedback("MM", "MO", "[M] -O-");
-        checkFeedback("AA", "BB", "-B- -B-");
+        checkFeedback("MM", "MO", "[M] <O>");
+        checkFeedback("AA", "BB", "<B> <B>");    // tie: both marked
+    }
+
+    // ---------------------------------------------------------------
+    // Battleship closeness: <Q> marks and messages
+    // ---------------------------------------------------------------
+    private static void testCloseness() {
+        System.out.println("== Closeness ==");
+        String[] none = {};
+
+        // The example from the design: A is 1 away from B.
+        checkFeedback("BG", "AZ", "<A> -Z-");
+        checkHints("BG", "AZ", new String[] {"letter A is so close!"});
+
+        // Distance 2 and 3 are "almost there".
+        checkFeedback("BG", "DZ", "<D> -Z-");    // D is 2 from B
+        checkHints("BG", "DZ", new String[] {"letter D is almost there"});
+        checkFeedback("BG", "ZJ", "-Z- <J>");    // J is 3 from G
+        checkHints("BG", "ZJ", new String[] {"letter J is almost there"});
+
+        // Distance 4 or more: still marked closest, but no message.
+        checkFeedback("BG", "KZ", "<K> -Z-");    // K is 4 from G
+        checkHints("BG", "KZ", none);
+
+        // Distance is measured to the nearest secret letter, either position.
+        checkFeedback("BG", "ZH", "-Z- <H>");    // H is 1 from G
+        checkHints("BG", "ZH", new String[] {"letter H is so close!"});
+        checkFeedback("BG", "HZ", "<H> -Z-");    // H in first spot, still 1 from G
+        checkHints("BG", "HZ", new String[] {"letter H is so close!"});
+
+        // Only secret letters NOT already found count.
+        // G is found (CORRECT), so H is measured against B (6 away).
+        checkFeedback("BG", "HG", "<H> [G]");
+        checkHints("BG", "HG", none);
+        // B is found (PRESENT), so C is measured against G (4 away).
+        checkFeedback("BG", "CB", "<C> (B)");
+        checkHints("BG", "CB", none);
+        // B is found (CORRECT), so H is measured against G (1 away).
+        checkFeedback("BG", "BH", "[B] <H>");
+        checkHints("BG", "BH", new String[] {"letter H is so close!"});
+
+        // No letters left to find: no <Q> and no messages.
+        checkFeedback("BG", "GB", "(G) (B)");
+        checkHints("BG", "GB", none);
+        checkHints("BG", "BG", none);
+
+        // Ties: both letters marked, both get messages.
+        checkFeedback("MX", "LN", "<L> <N>");
+        checkHints("MX", "LN", new String[] {"letter L is so close!",
+                                            "letter N is so close!"});
+        // Same letter twice: both marked, but only one message.
+        checkFeedback("BG", "AA", "<A> <A>");
+        checkHints("BG", "AA", new String[] {"letter A is so close!"});
+        // Different distances, closer one wins even if both are near.
+        checkFeedback("BG", "DH", "-D- <H>");    // D is 2, H is 1
+        checkHints("BG", "DH", new String[] {"letter H is so close!"});
+
+        // The alphabet does not wrap: A is 25 away from Z, not 1.
+        checkFeedback("ZZ", "AA", "<A> <A>");
+        checkHints("ZZ", "AA", none);
+
+        // Hints are case insensitive and do not use a turn.
+        Word w = new Word("BG");
+        checkHintList("lower case guess \"az\" gives same message",
+                w.getHints("az"), new String[] {"letter A is so close!"});
+        check("getHints() does not use a turn", w.getGuessCount() == 0);
+        try {
+            w.getHints("a z");
+            check("getHints() rejects invalid input", false);
+        } catch (IllegalArgumentException e) {
+            check("getHints() rejects invalid input", true);
+        }
+    }
+
+    // ---------------------------------------------------------------
+    // Alphabet indexes of the secret word
+    // ---------------------------------------------------------------
+    private static void testSecretIndexes() {
+        System.out.println("== Secret indexes ==");
+        check("A has index 0", Word.alphabetIndex('A') == 0);
+        check("Z has index 25", Word.alphabetIndex('Z') == 25);
+        int[] bg = new Word("bg").getSecretIndexes();
+        check("secret BG stored as {1, 6}", bg.length == 2 && bg[0] == 1 && bg[1] == 6);
+        int[] za = new Word("ZA").getSecretIndexes();
+        check("secret ZA stored as {25, 0}", za[0] == 25 && za[1] == 0);
+        // Changing the returned copy must not change the game.
+        Word w = new Word("BG");
+        w.getSecretIndexes()[0] = 99;
+        check("getSecretIndexes() returns a copy", w.getSecretIndexes()[0] == 1);
     }
 
     // ---------------------------------------------------------------
@@ -307,6 +397,25 @@ public class WordTester {
             description += "   (got " + actual + ")";
         }
         check(description, actual.equals(expected));
+    }
+
+    private static void checkHints(String secret, String guess, String[] expected) {
+        Word w = new Word(secret);
+        String description = "secret " + secret + ", guess " + guess + " -> "
+                + (expected.length == 0 ? "no message" : String.join(" / ", expected));
+        checkHintList(description, w.getHints(guess), expected);
+    }
+
+    private static void checkHintList(String description, List<String> actual,
+                                      String[] expected) {
+        boolean same = actual.size() == expected.length;
+        for (int i = 0; same && i < expected.length; i++) {
+            same = actual.get(i).equals(expected[i]);
+        }
+        if (!same) {
+            description += "   (got " + actual + ")";
+        }
+        check(description, same);
     }
 
     private static void checkGuessRejected(String guess) {
