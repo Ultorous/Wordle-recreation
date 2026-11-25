@@ -2,6 +2,8 @@
 
 A console version of Wordle in Java, where the secret word is one of the 107 legal two-letter Scrabble words from the NASPA Word List (NWL). The player gets 6 guesses. After each guess the program shows which letters are in the right spot, which are in the word but in the wrong spot, and which are not in the word.
 
+Iteration 2 adds a Battleship-style hint: the guessed letter that is closest in the alphabet to a letter still to be found is marked, and a message appears when it is within 1 or 3 letters.
+
 This project was built with generative AI (Claude) as a coding collaborator, as part of a design → build → test → learn assignment.
 
 ## How to play
@@ -13,8 +15,18 @@ This project was built with generative AI (Claude) as a coding collaborator, as 
   |---|---|
   | `[Q]` | right letter, right spot |
   | `(Q)` | letter is in the word, wrong spot |
+  | `<Q>` | not in the word, but the closest of your letters (in A–Z order) to a letter you haven't found yet |
   | `-Q-` | letter is not in the word |
 
+- A `<Q>` letter also gets a message when it is near:
+
+  | Alphabet distance | Message |
+  |---|---|
+  | 1 | `letter Q is so close!` |
+  | 2–3 | `letter Q is almost there` |
+  | 4 or more | no message |
+
+  Example: the secret word is `BG` and you guess `AZ`. The board shows `<A> -Z-`, followed by `letter A is so close!`, because A is next to B.
 - Type `STOP` (any case) at a guess prompt to quit. The secret word is revealed.
 - Invalid input (wrong length, an empty line, spaces, or anything other than A–Z) prints `Improper input. Please enter a two letter guess` and does **not** use up a guess.
 - When a game ends with a win or a loss, the secret word is shown and you are asked whether to play again.
@@ -32,8 +44,8 @@ The code uses only Java 8 features, so it compiles on any JDK from 8 onward.
 
 | File | Purpose |
 |---|---|
-| `Word.java` | Holds the secret word for one game and all of the game logic: loading the dictionary, picking a random word, validating guesses, scoring guesses, and tracking the game state. |
-| `TwoLetterWordle.java` | Client class. Creates a new `Word` for each game, reads input, prints the board, and handles STOP and play-again. |
+| `Word.java` | Holds the secret word for one game and all of the game logic: loading the dictionary, picking a random word, storing the secret's alphabet indexes, validating guesses, scoring guesses, closeness hints, and tracking the game state. |
+| `TwoLetterWordle.java` | Client class. Creates a new `Word` for each game, reads input, prints the board and hints, and handles STOP and play-again. |
 | `WordTester.java` | Separate testing driver for `Word`. |
 | `words.txt` | The 107 NWL two-letter words, one per line, upper case, sorted. |
 
@@ -44,23 +56,27 @@ The code uses only Java 8 features, so it compiles on any JDK from 8 onward.
 - **Two constructors**
   - `Word(File dictionaryFile)` picks a random secret word from the file.
   - `Word(String secret)` uses a specific secret word, for testing and debugging.
-- **`loadDictionary(File)`** reads the file into a `TreeSet<String>`. It trims spaces, skips blank lines, and converts words to upper case. The set drops duplicates automatically. A malformed line (wrong length or a non-letter) throws an `IllegalArgumentException` that names the line number, so a mistake in the file is caught immediately instead of producing an impossible secret word.
-- **`pickRandomWord(Set, Random)`** copies the set into an `ArrayList` so a word can be picked by index (a `Set` has no index). Passing in the `Random` object means a test can use a fixed seed to reproduce the same word.
-- **`normalizeGuess(String)`** checks that a guess is exactly two letters A–Z and returns it in upper case. Otherwise it throws `IllegalArgumentException` with the "Improper input" message, and the client catches it and prompts again.
-- **`evaluate(String)`** scores a guess without recording it. **`makeGuess(String)`** scores a guess and records it.
+- **`storeSecretIndexes()`** (called by the constructor) stores each secret letter's alphabet index in an `int[]`, with A=0 through Z=25. For example, `BG` is stored as `{1, 6}`. `getSecretIndexes()` returns a copy, for debugging.
+- **`loadDictionary(File)`** reads the file into a `TreeSet<String>`. It trims spaces, skips blank lines, and converts words to upper case. The set drops duplicates automatically. A malformed line throws an `IllegalArgumentException` that names the line number.
+- **`pickRandomWord(Set, Random)`** copies the set into an `ArrayList` so a word can be picked by index. Passing in the `Random` object means a test can use a fixed seed to reproduce the same word.
+- **`normalizeGuess(String)`** checks that a guess is exactly two letters A–Z and returns it in upper case. Otherwise it throws `IllegalArgumentException` with the "Improper input" message, which the client catches before prompting again.
+- **`evaluate(String)`** returns the result for each letter of a guess. **`getHints(String)`** returns the closeness messages for a guess. **`makeGuess(String)`** scores a guess and records it.
 - **State methods:** `isSolved()`, `isGameOver()`, `getGuessCount()`, `getGuessesRemaining()`, `getSecret()`.
-- **`toString()`** returns the board, one numbered line per guess.
+- **`toString()`** returns the board, one numbered line per guess, including `<Q>` marks.
 
-### Scoring repeated letters
+### Scoring (private `score` method)
 
-A naive approach — "green if same position, else yellow if the letter appears anywhere in the secret" — gives wrong answers when a letter repeats. For example, with secret `BA` and guess `AA`, the naive approach marks the first `A` yellow. But the secret's only `A` is already matched by the second (green) `A`, so the first `A` should be gray.
+`evaluate` and `getHints` both call one private `score` method, so the marks and the messages can never disagree. `score` works in four passes over the guess and secret indexes, using a `boolean[]` to record which secret positions have already been matched:
 
-`evaluate` uses two passes and a `Map<Character, Integer>`:
+1. **CORRECT:** right letter in the right position. That secret position is used up.
+2. **PRESENT:** for each remaining guess letter, look for an unused secret position with the same letter. If one is found, the guess letter is PRESENT and that position is used up.
+3. **ABSENT:** every other guess letter is ABSENT. Record its alphabet distance to the nearest **unused** secret letter.
+4. **CLOSEST:** the ABSENT letter(s) with the smallest distance become CLOSEST.
 
-1. Mark the exact matches as correct, and count the secret's letters that were not matched.
-2. For each remaining guess letter, mark it "in the word" only if an unmatched copy is still left in the count, and subtract one; otherwise mark it "not in the word".
+Two rules follow from this:
 
-`WordTester` checks this with the two-letter words that contain repeated letters (`AA`, `MM`) and guesses like `MM` and `AA`. As a check on the tests themselves, swapping in the naive approach makes 5 of the feedback tests fail.
+- **Repeated letters are scored correctly.** With secret `BA` and guess `AA`, the second `A` is CORRECT and uses up the secret's only `A`. The first `A` is therefore not PRESENT. Instead it is CLOSEST, because it is 1 away from the unfound `B`.
+- **Closeness ignores letters already found.** With secret `BG` and guess `HG`, `G` is already found, so `H` is measured against `B` (6 away), not `G` (1 away). Otherwise "so close!" would point at a letter the player already has.
 
 ### Data structures used
 
@@ -68,10 +84,16 @@ A naive approach — "green if same position, else yellow if the letter appears 
 |---|---|---|
 | `TreeSet<String>` | dictionary | removes duplicates and keeps words sorted |
 | `ArrayList<String>` | random pick, guess history | indexed access, guesses kept in order |
-| `HashMap<Character, Integer>` | `evaluate` | counts unmatched letters for repeated-letter scoring |
-| `enum LetterResult` | feedback | three named results instead of magic strings or numbers |
+| `int[]` | secret and guess alphabet indexes | position-by-position comparison and distance math |
+| `boolean[]` | scoring | records which secret positions are already matched |
+| `HashSet<Character>` | `getHints` | gives one message per letter when a guess repeats a letter |
+| `enum LetterResult` | feedback | four named results instead of magic strings or numbers |
 
-## Design decisions (iteration 1)
+Iteration 1 counted unmatched letters with a `HashMap<Character, Integer>`. A count says how many copies of a letter remain, but not *which positions* are still unfound. Closeness needs the positions, so iteration 2 replaced the map with the `boolean[]`. The repeated-letter tests from iteration 1 still pass with their updated expected output.
+
+## Design decisions
+
+### Iteration 1
 
 | Question | Decision |
 |---|---|
@@ -85,6 +107,20 @@ A naive approach — "green if same position, else yellow if the letter appears 
 | Display | Plain text markers instead of colors, so it works in every console, including jGRASP's. |
 | Dictionary file | Written by hand. The loader also cleans and validates it, in case it is edited later. |
 
+### Iteration 2: Battleship closeness
+
+The trigger for this iteration came from play-testing. Players often guess two random letters just to find a hit, and the game only becomes interesting once one letter is found. Closeness hints make the misses useful.
+
+| Question | Decision |
+|---|---|
+| Distance measure | Alphabet index difference, A=0 … Z=25. |
+| Wrap around (Z next to A)? | No. A Battleship grid has edges. |
+| Measured against which secret letters? | Only secret letters not already found by CORRECT or PRESENT. |
+| Which secret position? | Either one. A letter is compared with every unfound secret letter, and the smallest distance counts. |
+| Mark `<Q>` only when near? | No. The closest miss is always marked, as specified. Messages appear only at distance 3 or less. |
+| Ties | All tied letters are marked, since choosing one would be arbitrary. Each distinct letter gets one message. |
+| Message wording | `letter Q is so close!` (distance 1), `letter Q is almost there` (2–3). |
+
 ### Edge cases found while building
 
 - **Upper-casing can change a string's length.** The German letter `ß` becomes `SS` when upper-cased. Checking the length *after* upper-casing would let a one-character input through as the guess `SS`. The validator therefore checks the original characters before converting.
@@ -92,13 +128,13 @@ A naive approach — "green if same position, else yellow if the letter appears 
 
 ## Known limitations / ideas for the next iteration
 
+- Because the closest miss is always marked, a guess with only one miss always shows `<Q>`, even when that letter is far away. In that case the mark adds no information. One option is to show `<Q>` only within distance 3.
+- The hint doesn't say whether the secret letter is earlier or later in the alphabet. Adding a direction (e.g. "letter A is so close! (go later)") would make the game more like a guided search.
 - The word length is a constant (`Word.WORD_LENGTH = 2`). A different word length would also need a new error message and a new word file.
 - Possible additions:
   - show the letters already ruled out
   - warn when a guess is repeated
-  - show the definition of the secret word at the end
   - an option to require real words as guesses
-  - an option to switch to the Collins list
 
 ## Word list source
 
