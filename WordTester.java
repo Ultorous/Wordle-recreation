@@ -46,22 +46,22 @@ public class WordTester {
         System.out.println("== Feedback ==");
         checkFeedback("QI", "QI", "[Q] [I]");    // exact match
         checkFeedback("QI", "qi", "[Q] [I]");    // lower case guess
-        checkFeedback("QI", "XU", "-X- <U>");    // U is 4 from Q, X is 7 from Q
+        checkFeedback("QI", "XU", "-X- <U>");    // both miss: U is 4 from Q, X is 7
         checkFeedback("AB", "BA", "(B) (A)");    // both letters swapped
-        checkFeedback("AB", "AX", "[A] <X>");    // one correct, other is closest
-        checkFeedback("AB", "XA", "<X> (A)");    // one present, other is closest
+        checkFeedback("AB", "AX", "[A] -X-");    // one correct: no closeness
+        checkFeedback("AB", "XA", "-X- (A)");    // one present: no closeness
         checkFeedback("MA", "AM", "(A) (M)");
         // Repeated letters: these break a naive one-pass algorithm.
-        checkFeedback("BA", "AA", "<A> [A]");    // only one A in secret
-        checkFeedback("AB", "AA", "[A] <A>");
-        checkFeedback("MO", "MM", "[M] <M>");
-        checkFeedback("OM", "MM", "<M> [M]");
-        checkFeedback("HM", "MM", "<M> [M]");
-        checkFeedback("AA", "AB", "[A] <B>");
-        checkFeedback("AA", "BA", "<B> [A]");
+        checkFeedback("BA", "AA", "-A- [A]");    // only one A in secret
+        checkFeedback("AB", "AA", "[A] -A-");
+        checkFeedback("MO", "MM", "[M] -M-");
+        checkFeedback("OM", "MM", "-M- [M]");
+        checkFeedback("HM", "MM", "-M- [M]");
+        checkFeedback("AA", "AB", "[A] -B-");
+        checkFeedback("AA", "BA", "-B- [A]");
         checkFeedback("MM", "MM", "[M] [M]");
-        checkFeedback("MM", "MO", "[M] <O>");
-        checkFeedback("AA", "BB", "<B> <B>");    // tie: both marked
+        checkFeedback("MM", "MO", "[M] -O-");
+        checkFeedback("AA", "BB", "<B> <B>");    // both miss, tie: both marked
     }
 
     // ---------------------------------------------------------------
@@ -91,18 +91,31 @@ public class WordTester {
         checkFeedback("BG", "HZ", "<H> -Z-");    // H in first spot, still 1 from G
         checkHints("BG", "HZ", new String[] {"letter H is so close!"});
 
-        // Only secret letters NOT already found count.
-        // G is found (CORRECT), so H is measured against B (6 away).
-        checkFeedback("BG", "HG", "<H> [G]");
-        checkHints("BG", "HG", none);
-        // B is found (PRESENT), so C is measured against G (4 away).
-        checkFeedback("BG", "CB", "<C> (B)");
-        checkHints("BG", "CB", none);
-        // B is found (CORRECT), so H is measured against G (1 away).
-        checkFeedback("BG", "BH", "[B] <H>");
-        checkHints("BG", "BH", new String[] {"letter H is so close!"});
+        // Closeness applies only when NEITHER letter is in the word.
+        // The examples from the design, with secret NO:
+        checkFeedback("NO", "MZ", "<M> -Z-");    // M is 1 from N
+        checkHints("NO", "MZ", new String[] {"letter M is so close!"});
+        checkFeedback("NO", "AO", "-A- [O]");    // O found: no closeness
+        checkHints("NO", "AO", none);
+        checkFeedback("NO", "LR", "<L> -R-");    // L is 2 from N, R is 3 from O
+        checkHints("NO", "LR", new String[] {"letter L is almost there"});
 
-        // No letters left to find: no <Q> and no messages.
+        // One letter CORRECT: the other is never marked, even if 1 away.
+        checkFeedback("BG", "BH", "[B] -H-");    // H is 1 from G
+        checkHints("BG", "BH", none);
+        checkFeedback("BG", "HG", "-H- [G]");
+        checkHints("BG", "HG", none);
+        // One letter PRESENT: the other is never marked, even if 1 away.
+        checkFeedback("BG", "GA", "(G) -A-");    // A is 1 from B
+        checkHints("BG", "GA", none);
+
+        // Closeness looks at every secret letter, including one the player
+        // may have found on an EARLIER guess. Secret NO, guess PZ:
+        // P is 1 from O, so P gets "so close!" even if O is already known.
+        checkFeedback("NO", "PZ", "<P> -Z-");
+        checkHints("NO", "PZ", new String[] {"letter P is so close!"});
+
+        // Both letters found: no <Q> and no messages.
         checkFeedback("BG", "GB", "(G) (B)");
         checkHints("BG", "GB", none);
         checkHints("BG", "BG", none);
